@@ -1,10 +1,10 @@
-package glance
+package openstack
 
 import (
 	"fmt"
 )
 
-const BuilderId = "transcend.post-processor.glance"
+const BuilderId = "transcend.post-processor.openstack"
 
 type Artifact struct {
 	ImageId  string
@@ -31,7 +31,7 @@ func (a *Artifact) Id() string {
 }
 
 func (a *Artifact) String() string {
-	return fmt.Sprintf("'%s' provider glance: %s", a.Provider, a.ImageId)
+	return fmt.Sprintf("'%s' post-processor openstack: %s", a.Provider, a.ImageId)
 }
 
 func (a *Artifact) Destroy() error {

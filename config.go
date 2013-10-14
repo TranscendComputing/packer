@@ -37,6 +37,7 @@ const defaultConfig = `
 	},
 
 	"post-processors": {
+		"openstack": "packer-post-processor-openstack",
 		"vagrant": "packer-post-processor-vagrant"
 	},
 
