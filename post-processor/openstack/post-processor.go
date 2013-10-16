@@ -23,7 +23,7 @@ type Config struct {
 
 type PostProcessor struct {
 	config      Config
-	premade     map[string]GlanceProcessor
+	premade     map[string]OpenStackProcessor
 	extraConfig map[string]interface{}
 }
 
@@ -62,7 +62,7 @@ func (p *PostProcessor) Configure(raws ...interface{}) error {
 		return errs
 	}
 
-	p.premade = make(map[string]GlanceProcessor)
+	p.premade = make(map[string]OpenStackProcessor)
 	for k, raw := range mapConfig {
 		pp, err := p.openstackProcessor(k, raw, p.extraConfig)
 		if err != nil {
@@ -103,15 +103,15 @@ func (p *PostProcessor) PostProcess(ui packer.Ui, artifact packer.Artifact) (pac
 		}
 
 		if pp == nil {
-			return nil, false, fmt.Errorf("Glance upload post-processor not found: %s", ppName)
+			return nil, false, fmt.Errorf("OpenStack upload post-processor not found: %s", ppName)
 		}
 	}
 
-	ui.Say(fmt.Sprintf("Uploading (to Glance) image for '%s' provider", ppName))
+	ui.Say(fmt.Sprintf("Uploading (to OpenStack) image for '%s' provider", ppName))
 	return pp.Process(ui, artifact, p.config.AccessConfig)
 }
 
-func (p *PostProcessor) openstackProcessor(key string, specific interface{}, extra map[string]interface{}) (GlanceProcessor, error) {
+func (p *PostProcessor) openstackProcessor(key string, specific interface{}, extra map[string]interface{}) (OpenStackProcessor, error) {
 	gp := keyToPostProcessor(key)
 	if gp == nil {
 		return nil, nil
@@ -126,14 +126,14 @@ func (p *PostProcessor) openstackProcessor(key string, specific interface{}, ext
 
 // keyToPostProcessor maps a configuration key to the actual post-processor
 // it will be configuring. This returns a new instance of that post-processor.
-func keyToPostProcessor(key string) GlanceProcessor {
+func keyToPostProcessor(key string) OpenStackProcessor {
 	switch key {
 	case "virtualbox":
-		return new(VBoxGlanceProcessor)
+		return new(VBoxOpenStackProcessor)
 	case "vmware":
-		return new(VMwareGlanceProcessor)
+		return new(VMwareOpenStackProcessor)
 	case "qemu":
-		return new(QemuGlanceProcessor)
+		return new(QemuOpenStackProcessor)
 	default:
 		return nil
 	}

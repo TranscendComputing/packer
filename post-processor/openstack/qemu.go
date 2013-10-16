@@ -8,17 +8,17 @@ import (
 	"strings"
 )
 
-type QemuGlanceConfig struct {
+type QemuOpenStackConfig struct {
 	common.PackerConfig `mapstructure:",squash"`
 	ImageConfig         `mapstructure:",squash"`
 	tpl                 *packer.ConfigTemplate
 }
 
-type QemuGlanceProcessor struct {
-	config QemuGlanceConfig
+type QemuOpenStackProcessor struct {
+	config QemuOpenStackConfig
 }
 
-func (p *QemuGlanceProcessor) Configure(raws ...interface{}) error {
+func (p *QemuOpenStackProcessor) Configure(raws ...interface{}) error {
 	md, err := common.DecodeConfig(&p.config, raws...)
 	if err != nil {
 		return err
@@ -41,7 +41,7 @@ func (p *QemuGlanceProcessor) Configure(raws ...interface{}) error {
 	return nil
 }
 
-func (p *QemuGlanceProcessor) Process(ui packer.Ui, artifact packer.Artifact,
+func (p *QemuOpenStackProcessor) Process(ui packer.Ui, artifact packer.Artifact,
 	ac AccessConfig) (packer.Artifact, bool, error) {
 
 	// Get the file and type from the artifact.
@@ -59,7 +59,7 @@ func (p *QemuGlanceProcessor) Process(ui packer.Ui, artifact packer.Artifact,
 			diskFormat = "raw"
 		}
 	}
-	log.Println("QemuGlanceProcessor.Process: will upload ", imagePath,
+	log.Println("QemuOpenStackProcessor.Process: will upload ", imagePath,
 		" as ", diskFormat)
 
 	err := ac.Auth()

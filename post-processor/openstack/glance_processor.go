@@ -4,7 +4,7 @@ import (
 	"github.com/mitchellh/packer/packer"
 )
 
-type GlanceProcessor interface {
+type OpenStackProcessor interface {
 	// Configuration
 	Configure(...interface{}) error
 

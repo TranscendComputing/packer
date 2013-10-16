@@ -6,16 +6,16 @@ import (
 	"github.com/mitchellh/packer/packer"
 )
 
-type VBoxGlanceConfig struct {
+type VBoxOpenStackConfig struct {
 	common.PackerConfig `mapstructure:",squash"`
 	tpl                 *packer.ConfigTemplate
 }
 
-type VBoxGlanceProcessor struct {
-	config VBoxGlanceConfig
+type VBoxOpenStackProcessor struct {
+	config VBoxOpenStackConfig
 }
 
-func (p *VBoxGlanceProcessor) Configure(raws ...interface{}) error {
+func (p *VBoxOpenStackProcessor) Configure(raws ...interface{}) error {
 	md, err := common.DecodeConfig(&p.config, raws...)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func (p *VBoxGlanceProcessor) Configure(raws ...interface{}) error {
 	return nil
 }
 
-func (p *VBoxGlanceProcessor) Process(ui packer.Ui, artifact packer.Artifact,
+func (p *VBoxOpenStackProcessor) Process(ui packer.Ui, artifact packer.Artifact,
 	access AccessConfig) (packer.Artifact, bool, error) {
 
 	// TODO: implement
