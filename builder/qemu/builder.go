@@ -54,11 +54,11 @@ type Builder struct {
 type config struct {
 	common.PackerConfig `mapstructure:",squash"`
 
-	BootCommand     []string   `mapstructure:"boot_command"`
-	DiskSize        uint       `mapstructure:"disk_size"`
-	FloppyFiles     []string   `mapstructure:"floppy_files"`
-	Format          string     `mapstructure:"format"`
 	Accelerator     string     `mapstructure:"accelerator"`
+	BootCommand     []string   `mapstructure:"boot_command"`
+	DiskInterface   string     `mapstructure:"disk_interface"`
+	DiskSize        uint       `mapstructure:"disk_size"`
+	Format          string     `mapstructure:"format"`
 	Headless        bool       `mapstructure:"headless"`
 	HTTPDir         string     `mapstructure:"http_directory"`
 	HTTPPortMin     uint       `mapstructure:"http_port_min"`
@@ -66,6 +66,7 @@ type config struct {
 	ISOChecksum     string     `mapstructure:"iso_checksum"`
 	ISOChecksumType string     `mapstructure:"iso_checksum_type"`
 	ISOUrls         []string   `mapstructure:"iso_urls"`
+	NetDevice       string     `mapstructure:"net_device"`
 	OutputDir       string     `mapstructure:"output_directory"`
 	QemuArgs        [][]string `mapstructure:"qemuargs"`
 	ShutdownCommand string     `mapstructure:"shutdown_command"`
@@ -78,8 +79,6 @@ type config struct {
 	VNCPortMin      uint       `mapstructure:"vnc_port_min"`
 	VNCPortMax      uint       `mapstructure:"vnc_port_max"`
 	VMName          string     `mapstructure:"vm_name"`
-	NetDevice       string     `mapstructure:"net_device"`
-	DiskInterface   string     `mapstructure:"disk_interface"`
 
 	RawBootWait        string `mapstructure:"boot_wait"`
 	RawSingleISOUrl    string `mapstructure:"iso_url"`
@@ -92,15 +91,15 @@ type config struct {
 	tpl             *packer.ConfigTemplate
 }
 
-func (b *Builder) Prepare(raws ...interface{}) error {
+func (b *Builder) Prepare(raws ...interface{}) ([]string, error) {
 	md, err := common.DecodeConfig(&b.config, raws...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	b.config.tpl, err = packer.NewConfigTemplate()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	b.config.tpl.UserVars = b.config.PackerUserVars
 
@@ -109,10 +108,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 
 	if b.config.DiskSize == 0 {
 		b.config.DiskSize = 40000
-	}
-
-	if b.config.FloppyFiles == nil {
-		b.config.FloppyFiles = make([]string, 0)
 	}
 
 	if b.config.Accelerator == "" {
@@ -217,16 +212,6 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 		if err := b.config.tpl.Validate(command); err != nil {
 			errs = packer.MultiErrorAppend(errs,
 				fmt.Errorf("Error processing boot_command[%d]: %s", i, err))
-		}
-	}
-
-	for i, file := range b.config.FloppyFiles {
-		var err error
-		b.config.FloppyFiles[i], err = b.config.tpl.Process(file, nil)
-		if err != nil {
-			errs = packer.MultiErrorAppend(errs,
-				fmt.Errorf("Error processing floppy_files[%d]: %s",
-					i, err))
 		}
 	}
 
@@ -361,10 +346,10 @@ func (b *Builder) Prepare(raws ...interface{}) error {
 	}
 
 	if errs != nil && len(errs.Errors) > 0 {
-		return errs
+		return nil, errs
 	}
 
-	return nil
+	return nil, nil
 }
 
 func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packer.Artifact, error) {
@@ -383,15 +368,23 @@ func (b *Builder) Run(ui packer.Ui, hook packer.Hook, cache packer.Cache) (packe
 			Url:          b.config.ISOUrls,
 		},
 		new(stepPrepareOutputDir),
-		&common.StepCreateFloppy{
-			Files: b.config.FloppyFiles,
-		},
 		new(stepCreateDisk),
-		new(stepSuppressMessages),
 		new(stepHTTPServer),
 		new(stepForwardSSH),
 		new(stepConfigureVNC),
-		new(stepRun),
+		&stepRun{
+			BootDrive: "d",
+			Message:   "Starting VM, booting from CD-ROM",
+		},
+		&stepBootWait{},
+		&stepTypeBootCommand{},
+		&stepWaitForShutdown{
+			Message: "Waiting for initial VM boot to shut down",
+		},
+		&stepRun{
+			BootDrive: "c",
+			Message:   "Starting VM, booting from hard disk",
+		},
 		&common.StepConnectSSH{
 			SSHAddress:     sshAddress,
 			SSHConfig:      sshConfig,
@@ -476,8 +469,10 @@ func (b *Builder) newDriver() (Driver, error) {
 	}
 
 	log.Printf("Qemu path: %s, Qemu Image page: %s", qemuPath, qemuImgPath)
-	driver := &QemuDriver{}
-	driver.Initialize(qemuPath, qemuImgPath)
+	driver := &QemuDriver{
+		QemuPath:    qemuPath,
+		QemuImgPath: qemuImgPath,
+	}
 
 	if err := driver.Verify(); err != nil {
 		return nil, err

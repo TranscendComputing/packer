@@ -1,8 +1,59 @@
-## 0.3.10 (unreleased)
+## 0.4.0 (unreleased)
+
+FEATURES:
+
+* QEMU builder. This builder builds a new VM compatible with KVM or Xen
+  using QEMU.
+* Vagrant post-processor can now make DigitalOcean provider boxes. [GH-504]
+
+IMPROVEMENTS:
+
+* builder/amazon/all: Can now specify a list of multiple security group
+  IDs to apply. [GH-499]
+
+## 0.3.11 (November 4, 2013)
+
+FEATURES:
+
+* builder/amazon/ebs: Ability to specify which availability zone to create
+  instance in. [GH-536]
+
+IMPROVEMENTS:
+
+* core: builders can now give warnings during validation. warnings won't
+  fail the build but may hint at potential future problems.
+* builder/digitalocean: Can now specify a droplet name
+* builder/virtualbox: Can now disable guest addition download entirely
+  by setting "guest_additions_mode" to "disable" [GH-580]
+* builder/virtualbox,vmware: ISO urls can now be https [GH-587]
+* builder/virtualbox,vmware: Warning if shutdown command is not specified,
+  since it is a common case of data loss.
+
+BUG FIXES:
+
+* core: Won't panic when writing to a bad pipe. [GH-560]
+* builder/amazon/all: Properly scrub access key and secret key from logs.
+  [GH-554]
+* builder/openstack: Properly scrub password from logs [GH-554]
+* builder/virtualbox: No panic if SSH host port min/max is the same. [GH-594]
+* builder/vmware: checks if `ifconfig` is in `/sbin` [GH-591]
+* builder/vmware: Host IP lookup works for non-C locales. [GH-592]
+* common/uuid: Use cryptographically secure PRNG when generating
+  UUIDs. [GH-552]
+* communicator/ssh: File uploads that exceed the size of memory no longer
+  cause crashes. [GH-561]
+
+## 0.3.10 (October 20, 2013)
+
+FEATURES:
+
+* Ansible provisioner
 
 IMPROVEMENTS:
 
 * post-processor/vagrant: support instance-store AMIs built by Packer. [GH-502]
+* post-processor/vagrant: can now specify compression level to use
+  when creating the box. [GH-506]
 
 BUG FIXES:
 
@@ -10,6 +61,8 @@ BUG FIXES:
 * builder/amazon: Scrub sensitive data from the logs. [GH-521]
 * builder/amazon: Handle the situation where an EC2 instance might not
   be immediately available. [GH-522]
+* builder/amazon/chroot: Files copied into the chroot remove destination
+  before copy, fixing issues with dangling symlinks. [GH-500]
 * builder/digitalocean: don't panic if erroneous API response doesn't
   contain error message. [GH-492]
 * builder/digitalocean: scrub API keys from config debug output [GH-516]
@@ -17,8 +70,13 @@ BUG FIXES:
 * builder/virtualbox: detect if vboxdrv isn't properly setup. [GH-488]
 * builder/virtualbox: sleep a bit before export to ensure the sesssion
   is unlocked. [GH-512]
+* builder/virtualbox: create SATA drives properly on VirtualBox 4.3 [GH-547]
+* builder/virtualbox: support user templates in SSH key path. [GH-539]
+* builder/vmware: support user templates in SSH key path. [GH-539]
 * communicator/ssh: Fix issue where a panic could arise from a nil
   dereference. [GH-525]
+* post-processor/vagrant: Fix issue with VirtualBox OVA. [GH-548]
+* provisioner/salt: Move salt states to correct remote directory. [GH-513]
 * provisioner/shell: Won't block on certain scripts on Windows anymore.
   [GH-507]
 

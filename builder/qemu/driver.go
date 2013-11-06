@@ -1,15 +1,19 @@
 package qemu
 
 import (
+	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"github.com/mitchellh/multistep"
+	"io"
 	"log"
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
+	"unicode"
 )
 
 type DriverCancelCallback func(state multistep.StateBag) bool
@@ -17,30 +21,14 @@ type DriverCancelCallback func(state multistep.StateBag) bool
 // A driver is able to talk to qemu-system-x86_64 and perform certain
 // operations with it.
 type Driver interface {
-	// Initializes the driver with the given values:
-	// Arguments: qemuPath - string value for the qemu-system-x86_64 executable
-	//            qemuImgPath - string value for the qemu-img executable
-	Initialize(string, string)
-
-	// Checks if the VM with the given name is running.
-	IsRunning(string) (bool, error)
-
 	// Stop stops a running machine, forcefully.
-	Stop(string) error
-
-	// SuppressMessages should do what needs to be done in order to
-	// suppress any annoying popups, if any.
-	SuppressMessages() error
+	Stop() error
 
 	// Qemu executes the given command via qemu-system-x86_64
-	Qemu(vmName string, qemuArgs ...string) error
+	Qemu(qemuArgs ...string) error
 
 	// wait on shutdown of the VM with option to cancel
-	WaitForShutdown(
-		vmName string,
-		block bool,
-		state multistep.StateBag,
-		cancellCallback DriverCancelCallback) error
+	WaitForShutdown(<-chan struct{}) bool
 
 	// Qemu executes the given command via qemu-img
 	QemuImg(...string) error
@@ -54,161 +42,120 @@ type Driver interface {
 	Version() (string, error)
 }
 
-type driverState struct {
-	cmd        *exec.Cmd
-	cancelChan chan struct{}
-	waitDone   chan error
-}
-
 type QemuDriver struct {
-	qemuPath    string
-	qemuImgPath string
-	state       map[string]*driverState
+	QemuPath    string
+	QemuImgPath string
+
+	vmCmd   *exec.Cmd
+	vmEndCh <-chan int
+	lock    sync.Mutex
 }
 
-func (d *QemuDriver) getDriverState(name string) *driverState {
-	if _, ok := d.state[name]; !ok {
-		d.state[name] = &driverState{}
+func (d *QemuDriver) Stop() error {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+
+	if d.vmCmd != nil {
+		if err := d.vmCmd.Process.Kill(); err != nil {
+			return err
+		}
 	}
-	return d.state[name]
-}
 
-func (d *QemuDriver) Initialize(qemuPath string, qemuImgPath string) {
-	d.qemuPath = qemuPath
-	d.qemuImgPath = qemuImgPath
-	d.state = make(map[string]*driverState)
-}
-
-func (d *QemuDriver) IsRunning(name string) (bool, error) {
-	ds := d.getDriverState(name)
-	return ds.cancelChan != nil, nil
-}
-
-func (d *QemuDriver) Stop(name string) error {
-	ds := d.getDriverState(name)
-
-	// signal to the command 'wait' to kill the process
-	if ds.cancelChan != nil {
-		close(ds.cancelChan)
-		ds.cancelChan = nil
-	}
 	return nil
 }
 
-func (d *QemuDriver) SuppressMessages() error {
-	return nil
-}
+func (d *QemuDriver) Qemu(qemuArgs ...string) error {
+	d.lock.Lock()
+	defer d.lock.Unlock()
 
-func (d *QemuDriver) Qemu(vmName string, qemuArgs ...string) error {
-	var stdout, stderr bytes.Buffer
+	if d.vmCmd != nil {
+		panic("Existing VM state found")
+	}
 
-	log.Printf("Executing %s: %#v", d.qemuPath, qemuArgs)
-	ds := d.getDriverState(vmName)
-	ds.cmd = exec.Command(d.qemuPath, qemuArgs...)
-	ds.cmd.Stdout = &stdout
-	ds.cmd.Stderr = &stderr
+	stdout_r, stdout_w := io.Pipe()
+	stderr_r, stderr_w := io.Pipe()
 
-	err := ds.cmd.Start()
+	log.Printf("Executing %s: %#v", d.QemuPath, qemuArgs)
+	cmd := exec.Command(d.QemuPath, qemuArgs...)
+	cmd.Stdout = stdout_w
+	cmd.Stderr = stderr_w
 
+	err := cmd.Start()
 	if err != nil {
 		err = fmt.Errorf("Error starting VM: %s", err)
-	} else {
-		log.Printf("---- Started Qemu ------- PID = ", ds.cmd.Process.Pid)
-
-		ds.cancelChan = make(chan struct{})
-
-		// make the channel to watch the process
-		ds.waitDone = make(chan error)
-
-		// start the virtual machine in the background
-		go func() {
-			ds.waitDone <- ds.cmd.Wait()
-		}()
+		return err
 	}
 
-	return err
-}
+	go logReader("Qemu stdout", stdout_r)
+	go logReader("Qemu stderr", stderr_r)
 
-func (d *QemuDriver) WaitForShutdown(vmName string,
-	block bool,
-	state multistep.StateBag,
-	cancelCallback DriverCancelCallback) error {
-	var err error
+	log.Printf("Started Qemu. Pid: %d", cmd.Process.Pid)
 
-	ds := d.getDriverState(vmName)
+	// Wait for Qemu to complete in the background, and mark when its done
+	endCh := make(chan int, 1)
+	go func() {
+		defer stderr_w.Close()
+		defer stdout_w.Close()
 
-	if block {
-		// wait in the background for completion or caller cancel
-		for {
-			select {
-			case <-ds.cancelChan:
-				log.Println("Qemu process request to cancel -- killing Qemu process.")
-				if err = ds.cmd.Process.Kill(); err != nil {
-					log.Printf("Failed to kill qemu: %v", err)
-				}
-
-				// clear out the error channel since it's just a cancel
-				// and therefore the reason for failure is clear
-				log.Println("Empytying waitDone channel.")
-				<-ds.waitDone
-
-				// this gig is over -- assure calls to IsRunning see the nil
-				log.Println("'Nil'ing out cancelChan.")
-				ds.cancelChan = nil
-				return errors.New("WaitForShutdown cancelled")
-			case err = <-ds.waitDone:
-				log.Printf("Qemu Process done with output = %v", err)
-				// assure calls to IsRunning see the nil
-				log.Println("'Nil'ing out cancelChan.")
-				ds.cancelChan = nil
-				return nil
-			case <-time.After(1 * time.Second):
-				cancel := cancelCallback(state)
-				if cancel {
-					log.Println("Qemu process request to cancel -- killing Qemu process.")
-
-					// The step sequence was cancelled, so cancel waiting for SSH
-					// and just start the halting process.
-					close(ds.cancelChan)
-
-					log.Println("Cancel request made, quitting waiting for Qemu.")
-					return errors.New("WaitForShutdown cancelled by interrupt.")
+		var exitCode int = 0
+		if err := cmd.Wait(); err != nil {
+			if exiterr, ok := err.(*exec.ExitError); ok {
+				// The program has exited with an exit code != 0
+				if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+					exitCode = status.ExitStatus()
+				} else {
+					exitCode = 254
 				}
 			}
 		}
-	} else {
-		go func() {
-			select {
-			case <-ds.cancelChan:
-				log.Println("Qemu process request to cancel -- killing Qemu process.")
-				if err = ds.cmd.Process.Kill(); err != nil {
-					log.Printf("Failed to kill qemu: %v", err)
-				}
 
-				// clear out the error channel since it's just a cancel
-				// and therefore the reason for failure is clear
-				log.Println("Empytying waitDone channel.")
-				<-ds.waitDone
-				log.Println("'Nil'ing out cancelChan.")
-				ds.cancelChan = nil
+		endCh <- exitCode
 
-			case err = <-ds.waitDone:
-				log.Printf("Qemu Process done with output = %v", err)
-				log.Println("'Nil'ing out cancelChan.")
-				ds.cancelChan = nil
-			}
-		}()
+		d.lock.Lock()
+		defer d.lock.Unlock()
+		d.vmCmd = nil
+		d.vmEndCh = nil
+	}()
+
+	// Wait at least a couple seconds for an early fail from Qemu so
+	// we can report that.
+	select {
+	case exit := <-endCh:
+		if exit != 0 {
+			return fmt.Errorf("Qemu failed to start. Please run with logs to get more info.")
+		}
+	case <-time.After(2 * time.Second):
 	}
 
-	ds.cancelChan = nil
-	return err
+	// Setup our state so we know we are running
+	d.vmCmd = cmd
+	d.vmEndCh = endCh
+
+	return nil
+}
+
+func (d *QemuDriver) WaitForShutdown(cancelCh <-chan struct{}) bool {
+	d.lock.Lock()
+	endCh := d.vmEndCh
+	d.lock.Unlock()
+
+	if endCh == nil {
+		return true
+	}
+
+	select {
+	case <-endCh:
+		return true
+	case <-cancelCh:
+		return false
+	}
 }
 
 func (d *QemuDriver) QemuImg(args ...string) error {
 	var stdout, stderr bytes.Buffer
 
 	log.Printf("Executing qemu-img: %#v", args)
-	cmd := exec.Command(d.qemuImgPath, args...)
+	cmd := exec.Command(d.QemuImgPath, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -233,7 +180,7 @@ func (d *QemuDriver) Verify() error {
 func (d *QemuDriver) Version() (string, error) {
 	var stdout bytes.Buffer
 
-	cmd := exec.Command(d.qemuPath, "-version")
+	cmd := exec.Command(d.QemuPath, "-version")
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {
 		return "", err
@@ -249,4 +196,19 @@ func (d *QemuDriver) Version() (string, error) {
 
 	log.Printf("Qemu version: %s", matches[0])
 	return matches[0], nil
+}
+
+func logReader(name string, r io.Reader) {
+	bufR := bufio.NewReader(r)
+	for {
+		line, err := bufR.ReadString('\n')
+		if line != "" {
+			line = strings.TrimRightFunc(line, unicode.IsSpace)
+			log.Printf("%s: %s", name, line)
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
 }
