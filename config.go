@@ -23,6 +23,7 @@ const defaultConfig = `
 		"amazon-chroot": "packer-builder-amazon-chroot",
 		"amazon-instance": "packer-builder-amazon-instance",
 		"digitalocean": "packer-builder-digitalocean",
+		"docker": "packer-builder-docker",
 		"openstack": "packer-builder-openstack",
 		"qemu": "packer-builder-qemu",
 		"virtualbox": "packer-builder-virtualbox",
@@ -38,7 +39,8 @@ const defaultConfig = `
 
 	"post-processors": {
 		"openstack": "packer-post-processor-openstack",
-		"vagrant": "packer-post-processor-vagrant"
+		"vagrant": "packer-post-processor-vagrant",
+		"vsphere": "packer-post-processor-vsphere"
 	},
 
 	"provisioners": {
